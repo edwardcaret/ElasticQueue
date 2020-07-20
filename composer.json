@@ -1,5 +1,5 @@
 {
-  "name": "brokerexchange/elasticqueue",
+  "name": "edwardcaret/elasticqueue",
   "description": "Laravel Queue Driver for Elasticsearch",
   "keywords": [
     "elasticsearch",
