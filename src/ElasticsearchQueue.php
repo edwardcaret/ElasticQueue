@@ -224,7 +224,7 @@ class ElasticsearchQueue extends Queue implements QueueContract
 
         $result = $this->elasticsearch->search($params);
 
-        if ($result['hits']['total']) {
+        if ($result['hits']['total'] && ($result['hits']['total']['value'] > 0)) {
             $job = $result['hits']['hits'][0]['_source'];
         }
 
@@ -355,6 +355,26 @@ class ElasticsearchQueue extends Queue implements QueueContract
     protected function getQueue($queue)
     {
         return $queue ?: $this->default;
+    }
+
+    /**
+     * Get the current time as a unix timestamp
+     *
+     * @return integer
+     */
+    protected function getTime() {
+        return \Carbon::now()->timestamp;
+    }
+
+    /**
+     * Set element in the payload data
+     *
+     * @return string
+     */
+    protected function setMeta( $payload, $key, $val ) {
+        $payload = json_decode($payload);
+        $payload->$key = $val;
+        return json_encode($payload);
     }
 
     /**
