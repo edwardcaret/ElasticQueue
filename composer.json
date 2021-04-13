@@ -7,11 +7,15 @@
     "laravel"
   ],
   "license": "MIT",
-  "homepage": "http://brokerexchange.github.io/ElasticQueue/",
+  "homepage": "http://github.com/edwardcaret/ElasticQueue/",
   "authors": [
     {
       "name": "Brian Mix",
       "email": "brian@brokerbin.com"
+    },
+    {
+      "name": "Edward van der Jagt",
+      "email": "edward@caret.net"
     }
   ],
   "minimum-stability": "stable",
