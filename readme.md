@@ -28,3 +28,8 @@ ElasticQueue &copy; Broker Exchange Network 2018
             'retry_after' => 60,
         ],
 ```
+
+## Development notes:
+This code was originally created for version 6 (or older). However 7+ has removed mapping types, and this invalidates some code.
+See https://www.elastic.co/guide/en/elasticsearch/reference/current/removal-of-types.html
+

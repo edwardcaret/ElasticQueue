@@ -25,6 +25,10 @@ class ElasticQueueServiceProvider extends ServiceProvider
         resolve(QueueManager::class)->extend('elasticsearch', function() {
             return new ElasticsearchConnector(config('queue.connections.elasticsearch'));
         });
+
+        if ($this->app->runningInConsole()) {
+            $this->commands([QueueListCommand::class]);
+        }
     }
 
     /**

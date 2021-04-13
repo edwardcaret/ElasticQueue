@@ -45,7 +45,9 @@ class ElasticsearchQueue extends Queue implements QueueContract
      *
      * @var int|null
      */
-    protected $expire = 60;
+    protected $expire = 900;
+
+    protected $sorting_order = ['reserved_at:asc', 'available_at:asc'];
 
     /**
      * Create a new elasticsearch queue instance.
@@ -170,7 +172,7 @@ class ElasticsearchQueue extends Queue implements QueueContract
         );
 
         $params['index'] = $this->index;
-        $params['type'] = $queue;
+        #$params['type'] = $queue;
         $params['id'] = $attributes['id'];
         $params['body'] = $attributes;
 
@@ -209,18 +211,27 @@ class ElasticsearchQueue extends Queue implements QueueContract
         $job = false;
 
         $params['index'] = $this->index;
-        $params['type'] = $this->getQueue($queue);
+        #$params['type'] = $this->getQueue($queue);
         $params['body'] = [
             'query' => [
-                'range' => [
-                    'reserved_at' => [
-                        'lte' => Carbon::now()->subSeconds($this->expire)->getTimestamp(),
+                'bool' => [
+                    'must' => [
+                        'range' => [
+                            'reserved_at' => [
+                                'lte' => Carbon::now()->subSeconds($this->expire)->getTimestamp(),
+                            ],
+                        ],
+                    ],
+                    'must' => [
+                        'term' => [
+                            'queue' => $queue
+                        ],
                     ],
                 ],
-            ],
+            ]
         ];
         $params['size'] = 1;
-        $params['sort'] = ['reserved_at:desc', 'available_at:desc'];
+        $params['sort'] = $this->sorting_order;
 
         $result = $this->elasticsearch->search($params);
 
@@ -229,6 +240,10 @@ class ElasticsearchQueue extends Queue implements QueueContract
         }
 
         return $job ? (object) $job : null;
+    }
+
+    public function next($queue = null) {
+        return $this->getNextAvailableJob($queue);
     }
 
     /**
@@ -244,7 +259,7 @@ class ElasticsearchQueue extends Queue implements QueueContract
         $job->reserved_at = $this->getTime();
 
         $params['index'] = $this->index;
-        $params['type'] = $this->getQueue($queue);
+        #$params['type'] = $this->getQueue($queue);
         $params['id'] = $job->id;
         $params['body']['doc'] = [
             'reserved_at' => $job->reserved_at,
@@ -266,7 +281,7 @@ class ElasticsearchQueue extends Queue implements QueueContract
     public function deleteReserved($queue, $id)
     {
         $params['index'] = $this->index;
-        $params['type'] = $queue;
+        #$params['type'] = $queue;
         $params['id'] = $id;
 
         $this->elasticsearch->delete($params);
@@ -385,5 +400,106 @@ class ElasticsearchQueue extends Queue implements QueueContract
     public function getElasticsearch()
     {
         return $this->elasticsearch;
+    }
+
+    /**
+     * Delay given job ID
+     *
+     * @param $id
+     * @param $queue
+     * @return mixed
+     */
+    public function delayJob($id, $queue = null)
+    {
+        $params['index'] = $this->index;
+        #$params['type'] = $this->getQueue($queue);
+        $params['id'] = $id;
+        $params['body']['doc'] = [
+            'available_at' => $this->getTime() + 4*60*60,
+        ];
+
+        $result = $this->elasticsearch->update($params);
+
+        return $result;
+    }
+
+    public function list($queue = null, $format = 'ascii-table', $max = 1000, $skip = 0) {
+        $size   = 4;
+        $list   = null;
+        switch($format) {
+            case 'ascii-table': { $list = ''; break; }
+            case 'array': { $list = []; break; }
+        }
+        $result = $this->elasticsearch->search([
+                                                'index' => $this->index,
+                                                'size' => $size,
+                                                'scroll' => '1m',
+                                                'body' => (!is_null($queue) ? [ 'query' => [ 'term' => [ 'queue' => [ 'value' => $this->getQueue($queue) ] ] ] ] : []),
+                                                'sort' => $this->sorting_order
+                                               ]);
+        
+        if ($result['hits']['total']['value'] > 0) {
+            $pages = ceil($result['hits']['total']['value'] / $size);
+            $line_format = "%-36s | %10s | %10s | %10s | %8s | %-20s | %-32s\n";
+            switch($format) {
+                case 'ascii-table': {
+                                        $list .= sprintf($line_format, 'id', 'created', 'available', 'reserved', 'attempts', 'queue', 'name');
+                                        $list .= sprintf("%s\n", str_repeat('-', 36+10+10+10+8+20+32+(6*3)) );
+                                        break;
+                }
+            }
+            $counter = 0;
+            while($pages) {
+                foreach( $result['hits']['hits'] as $job ) {
+                    $decoded = json_decode( $job['_source']['payload'] );
+                    $command = unserialize( $decoded->data->command );
+                    $name = $decoded->displayName;
+                    if ($skip-- <= 0) {
+                        $counter++;
+                        switch($format) {
+                            case 'ascii-table': {
+                                                    $list .= sprintf($line_format
+                                                              , $job["_id"]
+                                                              , $job['_source']["created_at"]
+                                                              , $job['_source']["available_at"]
+                                                              , $job['_source']["reserved_at"]
+                                                              , $job['_source']["attempts"]
+                                                              , $job['_source']["queue"]
+                                                              , $name
+                                                    );
+                                                    break;
+                            }
+                            case 'array': {
+                                                    array_push( $list, [
+                                                                          "id" => $job["_id"],
+                                                                          "created_at" => $job['_source']["created_at"],
+                                                                          "available_at" => $job['_source']["available_at"],
+                                                                          "reserved_at" => $job['_source']["reserved_at"],
+                                                                          "attempts" => $job['_source']["attempts"],
+                                                                          "queue" => $job['_source']["queue"],
+                                                                          "name" => $name,
+                                                              ]
+                                                    );
+                                                    break;
+                            }
+                        }
+                    }
+                }
+                $pages --;
+                $id = $result['_scroll_id'];
+                $result = $this->elasticsearch->scroll([
+                    "scroll" => "1m",
+                    "scroll_id" => $id
+                ]);
+            }
+            switch($format) {
+                case 'ascii-table': { $list .= sprintf("%s\n", str_repeat('=', 36+10+10+10+8+20+32+(6*3)) ); break; }
+            }
+        } else {
+            switch($format) {
+                case 'ascii-table': { $list .= sprintf("Queue is empty.\n"); break; }
+            }
+        }
+        return $list;
     }
 }
